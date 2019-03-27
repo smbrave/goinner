@@ -45,8 +45,8 @@ func (p *Proxy) connect() {
 	upConn, err := upDial.Dial("tcp", p.config.UpAddr)
 	if err != nil {
 		log.Printf("[ERROR] connect %s err:%s", p.config.UpAddr, err.Error())
-		time.Sleep(time.Second)
 		once.Do(unLimit)
+		time.Sleep(time.Second)
 		return
 	}
 
@@ -56,8 +56,8 @@ func (p *Proxy) connect() {
 	downDial := net.Dialer{Timeout: 5 * time.Second}
 	downConn, err := downDial.Dial("tcp", p.config.DownAddr)
 	if err != nil {
-		time.Sleep(time.Second)
 		log.Printf("[ERROR] connect %s err:%s", p.config.DownAddr, err.Error())
+		time.Sleep(time.Second)
 		once.Do(unLimit)
 		return
 	}
