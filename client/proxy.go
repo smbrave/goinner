@@ -3,7 +3,6 @@ package main
 import (
 	"io"
 	"log"
-	"math/rand"
 	"net"
 	"sync"
 	"time"
@@ -12,7 +11,7 @@ import (
 type Config struct {
 	UpAddr      string
 	DownAddr    string
-	Concurrency int
+	Concurrency int64
 }
 
 type Client struct {
@@ -46,7 +45,7 @@ func (p *Proxy) connect() {
 	upConn, err := upDial.Dial("tcp", p.config.UpAddr)
 	if err != nil {
 		log.Printf("[ERROR] connect %s err:%s", p.config.UpAddr, err.Error())
-		time.Sleep(time.Duration(rand.Intn(10)) * time.Second)
+		time.Sleep(time.Second)
 		once.Do(unLimit)
 		return
 	}
@@ -57,7 +56,7 @@ func (p *Proxy) connect() {
 	downDial := net.Dialer{Timeout: 5 * time.Second}
 	downConn, err := downDial.Dial("tcp", p.config.DownAddr)
 	if err != nil {
-		time.Sleep(time.Duration(rand.Intn(10)) * time.Second)
+		time.Sleep(time.Second)
 		log.Printf("[ERROR] connect %s err:%s", p.config.DownAddr, err.Error())
 		once.Do(unLimit)
 		return
