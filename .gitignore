@@ -1,0 +1,7 @@
+*.iml
+.idea/
+output/
+build/
+log/*
+server/server
+client/client
