@@ -15,7 +15,7 @@ func main() {
 
 	var proxys common.StringArray
 
-	flag.Var(&proxys, "proxy", "address proxy for example --proxy=0.0.0.0:50000,0.0.0.0:40000,10")
+	flag.Var(&proxys, "proxy", "address proxy for example --proxy=0.0.0.0:40000,10")
 	flag.Parse()
 
 	log.Println(proxys)
@@ -23,17 +23,16 @@ func main() {
 	for _, m := range proxys {
 
 		fields := strings.Split(m, ",")
-		if len(fields) != 3 {
+		if len(fields) != 2 {
 			log.Println("--proxy=", m, "field error")
 			continue
 		}
-		concurrency, _ := strconv.ParseInt(fields[2], 10, 64)
+		concurrency, _ := strconv.ParseInt(fields[1], 10, 64)
 		if concurrency == 0 {
 			concurrency = 10
 		}
 		p := NewProxy(&Config{
 			UpAddr:      fields[0],
-			DownAddr:    fields[1],
 			Concurrency: concurrency,
 		})
 		go p.Start()

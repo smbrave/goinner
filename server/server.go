@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"log"
 	"math/rand"
 	"net"
@@ -14,64 +13,28 @@ import (
 type Config struct {
 	FrontAddr   string
 	BackendAddr string
-}
-
-type Client struct {
-	addr string
-	conn net.Conn
+	RemoteAddr  string
 }
 
 type Server struct {
-	config          *Config
-	exit            chan struct{}
-	idleClients     map[string]*Client
-	idleClientsLock sync.RWMutex
+	config      *Config
+	exit        chan struct{}
+	clients     map[string]*Client
+	clientsLock sync.RWMutex
 }
 
 func NewServer(config *Config) *Server {
 	return &Server{
-		config:      config,
-		exit:        make(chan struct{}),
-		idleClients: make(map[string]*Client),
+		config:  config,
+		exit:    make(chan struct{}),
+		clients: make(map[string]*Client),
 	}
 }
 
+
 func (s *Server) Start() {
 	go s.BackendLoop()
-
 	s.FrontLoop()
-}
-
-func (s *Server) Copy(src, dst net.Conn) {
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-	var once sync.Once
-
-	go func() {
-		io.Copy(src, dst)
-		once.Do(func() {
-			wg.Done()
-		})
-	}()
-
-	go func() {
-		io.Copy(dst, src)
-		once.Do(func() {
-			wg.Done()
-		})
-	}()
-
-	log.Println("[map] :", src.RemoteAddr().String(), "||", src.LocalAddr().String(), "==>",
-		dst.LocalAddr().String(), "||", dst.RemoteAddr().String())
-
-	wg.Wait()
-
-	log.Println("[unmap] :", src.RemoteAddr().String(), "||", src.LocalAddr().String(), "==>",
-		dst.LocalAddr().String(), "||", dst.RemoteAddr().String())
-
-	dst.Close()
-	src.Close()
 }
 
 func (s *Server) FrontLoop() {
@@ -102,23 +65,22 @@ func (s *Server) FrontLoop() {
 
 		conn.(*net.TCPConn).SetNoDelay(true)
 
-		if len(s.idleClients) == 0 {
+		if len(s.clients) == 0 {
 			log.Println("not enough backend client connection")
 			conn.Close()
 			continue
 		}
 		log.Println("front connected:", conn.RemoteAddr().String(), "==>", conn.LocalAddr().String())
 
-		s.idleClientsLock.Lock()
+		s.clientsLock.Lock()
 		clients := make([]*Client, 0)
-		for _, v := range s.idleClients {
+		for _, v := range s.clients {
 			clients = append(clients, v)
 		}
 		cli := clients[rand.Intn(len(clients))]
-		delete(s.idleClients, cli.addr)
-		s.idleClientsLock.Unlock()
-
-		go s.Copy(conn, cli.conn)
+		delete(s.clients, cli.addr)
+		s.clientsLock.Unlock()
+		cli.connect <- conn
 
 	}
 	close(s.exit)
@@ -153,13 +115,26 @@ func (s *Server) BackendLoop() {
 		conn.(*net.TCPConn).SetNoDelay(true)
 		remoteAddr := conn.RemoteAddr().String()
 
-		s.idleClientsLock.Lock()
-		if client, ok := s.idleClients[remoteAddr]; ok {
+		s.clientsLock.Lock()
+		if client, ok := s.clients[remoteAddr]; ok {
 			client.conn.Close()
 		}
-		s.idleClients[remoteAddr] = &Client{conn: conn, addr: conn.RemoteAddr().String()}
-		s.idleClientsLock.Unlock()
+		client := &Client{
+			conn:    conn,
+			server:  s,
+			addr:    conn.RemoteAddr().String(),
+			connect: make(chan net.Conn),
+		}
+		s.clients[remoteAddr] = client
+		s.clientsLock.Unlock()
 
+		client.delete = func() {
+			s.clientsLock.Lock()
+			delete(s.clients, remoteAddr)
+			s.clientsLock.Unlock()
+			client.conn.Close()
+		}
+		go client.IoLoop()
 		log.Println("backend connected:", conn.RemoteAddr().String(), "==>", conn.LocalAddr().String())
 	}
 
