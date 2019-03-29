@@ -3,12 +3,13 @@ package main
 import (
 	"encoding/binary"
 	"encoding/json"
-	"github.com/smbrave/goinner/common"
 	"io"
 	"log"
 	"net"
 	"sync"
 	"time"
+
+	"github.com/smbrave/goinner/common"
 )
 
 type Config struct {
@@ -85,7 +86,7 @@ func (c *Client) Keepalive() {
 			connectAddr = packet.Addr
 			break
 		}
-		log.Println("[common] PACKET_CODE_KEEPALIVE ok")
+		//log.Println("[common] PACKET_CODE_KEEPALIVE ok")
 	}
 
 	//发起链接
@@ -97,6 +98,7 @@ func (c *Client) Keepalive() {
 		return
 	}
 
+	log.Println("[common] PACKET_CODE_CONNECT", connectAddr)
 	downConn.(*net.TCPConn).SetNoDelay(true)
 	downConn.(*net.TCPConn).SetKeepAlive(true)
 

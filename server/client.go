@@ -3,20 +3,37 @@ package main
 import (
 	"encoding/binary"
 	"encoding/json"
-	"github.com/smbrave/goinner/common"
 	"io"
 	"log"
 	"net"
 	"sync"
 	"time"
+
+	"github.com/smbrave/goinner/common"
 )
 
 type Client struct {
-	addr    string
-	conn    net.Conn
-	delete  func()
-	server  *Server
-	connect chan net.Conn
+	connTime     time.Time
+	mapTime      time.Time
+	backendConn  net.Conn
+	frontendConn net.Conn
+	mapKey       string
+	delete       func()
+	server       *Server
+	connChan     chan net.Conn
+	exitChan     chan struct{}
+}
+
+func NewClient(s *Server) *Client {
+	return &Client{
+		connTime:     time.Now(),
+		backendConn:  nil,
+		frontendConn: nil,
+		delete:       nil,
+		server:       s,
+		connChan:     make(chan net.Conn),
+		exitChan:     make(chan struct{}),
+	}
 }
 
 func (c *Client) SendKeepalive() error {
@@ -25,13 +42,13 @@ func (c *Client) SendKeepalive() error {
 	buf, _ := json.Marshal(packet)
 
 	bufLen := uint32(len(buf))
-	err := binary.Write(c.conn, binary.BigEndian, &bufLen)
+	err := binary.Write(c.backendConn, binary.BigEndian, &bufLen)
 	if err != nil {
 		log.Println("[common] binary.Write(c.conn, binary.BigEndian, &bufLen) error:", err.Error())
 		return err
 	}
 
-	n, err := c.conn.Write(buf)
+	n, err := c.backendConn.Write(buf)
 	if err != nil {
 		log.Println("c.conn.Write(buf) error:", err.Error())
 		return err
@@ -50,13 +67,13 @@ func (c *Client) SendConn() error {
 	buf, _ := json.Marshal(packet)
 
 	bufLen := uint32(len(buf))
-	err := binary.Write(c.conn, binary.BigEndian, &bufLen)
+	err := binary.Write(c.backendConn, binary.BigEndian, &bufLen)
 	if err != nil {
 		log.Println("binary.Write(c.conn, binary.BigEndian, &bufLen) error:", err.Error())
 		return err
 	}
 
-	n, err := c.conn.Write(buf)
+	n, err := c.backendConn.Write(buf)
 	if err != nil {
 		log.Println("c.conn.Write(buf) error:", err.Error())
 		return err
@@ -74,27 +91,32 @@ func (c *Client) Copy(conn net.Conn) {
 	var once sync.Once
 
 	go func() {
-		io.Copy(c.conn, conn)
+		io.Copy(c.backendConn, conn)
 		once.Do(func() {
 			wg.Done()
 		})
 	}()
 
 	go func() {
-		io.Copy(conn, c.conn)
+		io.Copy(conn, c.backendConn)
 		once.Do(func() {
 			wg.Done()
 		})
 	}()
 
 	log.Println("[map] :", conn.RemoteAddr().String(), "==>", conn.LocalAddr().String(), "==>",
-		c.conn.LocalAddr().String(), "==>", c.conn.RemoteAddr().String())
+		c.backendConn.LocalAddr().String(), "==>", c.backendConn.RemoteAddr().String())
 
 	wg.Wait()
 
 	log.Println("[unmap] :", conn.RemoteAddr().String(), "==>", conn.LocalAddr().String(), "==>",
-		c.conn.LocalAddr().String(), "==>", c.conn.RemoteAddr().String())
+		c.backendConn.LocalAddr().String(), "==>", c.backendConn.RemoteAddr().String())
 
+}
+func (c *Client) MapConn(conn net.Conn) {
+	c.mapTime = time.Now()
+	c.frontendConn = conn
+	c.connChan <- conn
 }
 
 func (c *Client) IoLoop() {
@@ -107,17 +129,40 @@ func (c *Client) IoLoop() {
 			if err != nil {
 				goto exit
 			}
-		case conn := <-c.connect:
+
+		case <-c.exitChan:
+			goto exit
+
+		case conn := <-c.connChan:
 			err := c.SendConn()
 			if err != nil {
-				conn.Close()
 				goto exit
 			}
 			c.Copy(conn)
-			conn.Close()
 			goto exit
 		}
 	}
 exit:
-	c.delete()
+	c.Stop()
+}
+
+func (c *Client) Stop() {
+	if c.exitChan != nil {
+		close(c.exitChan)
+		c.exitChan = nil
+	}
+	if c.frontendConn != nil {
+
+		c.frontendConn.Close()
+		c.frontendConn = nil
+	}
+	if c.backendConn != nil {
+		c.backendConn.Close()
+		c.backendConn = nil
+	}
+
+	if c.delete != nil {
+		c.delete()
+		c.delete = nil
+	}
 }
