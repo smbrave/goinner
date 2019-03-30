@@ -18,10 +18,11 @@ type Config struct {
 }
 
 type Client struct {
-	addr   string
-	conn   net.Conn
-	proxy  *Proxy
-	delete func()
+	addr    string
+	conn    net.Conn
+	proxy   *Proxy
+	delete  func()
+	release func()
 }
 
 type Proxy struct {
@@ -51,11 +52,13 @@ func (c *Client) Keepalive() {
 		n, err := c.conn.Read(buf)
 		if err != nil {
 			log.Println("[common] c.conn.Read(buf) error:", err.Error())
+			c.release()
 			c.delete()
 			return
 		}
 		if n != 4 {
 			log.Println("read len!=4")
+			c.release()
 			c.delete()
 			return
 		}
@@ -65,11 +68,13 @@ func (c *Client) Keepalive() {
 		n, err = c.conn.Read(packetBuf)
 		if err != nil {
 			log.Println("c.conn.Read(packetBuf) error:", err.Error())
+			c.release()
 			c.delete()
 			return
 		}
 		if n != int(packetLen) {
 			log.Println("c.conn.Read(packetBuf) len:", n, "expect:", packetLen)
+			c.release()
 			c.delete()
 			return
 		}
@@ -78,6 +83,7 @@ func (c *Client) Keepalive() {
 		err = json.Unmarshal(packetBuf, &packet)
 		if err != nil {
 			log.Println("json.Unmarshal(packetBuf, &packet) error:", err.Error())
+			c.release()
 			c.delete()
 			return
 		}
@@ -94,6 +100,7 @@ func (c *Client) Keepalive() {
 	downConn, err := upDial.Dial("tcp", connectAddr)
 	if err != nil {
 		log.Printf("[ERROR] connect %s err:%s", connectAddr, err.Error())
+		c.release()
 		c.delete()
 		return
 	}
@@ -114,6 +121,7 @@ func (c *Client) Keepalive() {
 		wg.Done()
 	}()
 
+	c.release()
 	wg.Wait()
 	downConn.Close()
 	c.delete()
@@ -150,8 +158,10 @@ func (p *Proxy) Connect() {
 		p.clientsLock.Lock()
 		delete(p.clients, localAdrr)
 		p.clientsLock.Unlock()
-		p.Release()
 		upConn.Close()
+	}
+	client.release = func() {
+		p.Release()
 	}
 
 	go client.Keepalive()
